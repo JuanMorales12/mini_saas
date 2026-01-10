@@ -23,11 +23,11 @@ export async function signUp(formData: FormData) {
   })
 
   if (error) {
-    return { error: error.message }
+    redirect(`/signup?error=${encodeURIComponent(error.message)}`)
   }
 
   revalidatePath('/', 'layout')
-  redirect('/dashboard')
+  redirect('/signup/success')
 }
 
 /**
@@ -45,7 +45,7 @@ export async function signIn(formData: FormData) {
   })
 
   if (error) {
-    return { error: error.message }
+    redirect(`/login?error=${encodeURIComponent(error.message)}`)
   }
 
   revalidatePath('/', 'layout')
@@ -58,11 +58,7 @@ export async function signIn(formData: FormData) {
 export async function signOut() {
   const supabase = await createClient()
 
-  const { error } = await supabase.auth.signOut()
-
-  if (error) {
-    return { error: error.message }
-  }
+  await supabase.auth.signOut()
 
   revalidatePath('/', 'layout')
   redirect('/')

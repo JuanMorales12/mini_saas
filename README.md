@@ -184,6 +184,8 @@ After payment, check your terminal running `stripe listen`. You should see:
 ```
 ✅ Webhook verified: checkout.session.completed
 ✅ User activated successfully
+stripe listen --forward-to localhost:3000/api/stripe/webhook
+
 ```
 
 ### 5. Check Dashboard

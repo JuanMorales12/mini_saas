@@ -1,6 +1,6 @@
 import Stripe from 'stripe'
 import { stripe } from './config'
-import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/server'
 
 /**
  * Handle checkout.session.completed event
@@ -11,49 +11,65 @@ async function handleCheckoutSessionCompleted(
 ) {
   console.log('✅ Checkout completed:', session.id)
 
-  const supabase = await createClient()
+  const supabase = createAdminClient()
   const customerId = session.customer as string
   const subscriptionId = session.subscription as string
 
   // Get the subscription details
   const subscription = await stripe.subscriptions.retrieve(subscriptionId)
 
+  // Get user ID from metadata
+  const userId = session.metadata?.supabase_user_id
+
+  if (!userId) {
+    console.error('❌ No supabase_user_id in session metadata')
+    return
+  }
+
   // Update user in database
-  const { error } = await supabase
+  const periodEnd = (subscription as any).current_period_end
+  const planType = getPlanFromPriceId(subscription.items.data[0].price.id)
+
+  console.log('🔍 Updating user with ID:', userId)
+  console.log('🔍 Plan type:', planType)
+  console.log('🔍 Subscription status:', subscription.status)
+
+  const { data, error } = await supabase
     .from('users')
     .update({
       stripe_customer_id: customerId,
-      plan: getPlanFromPriceId(subscription.items.data[0].price.id),
+      plan: planType,
       subscription_status: subscription.status,
-      current_period_end: new Date(
-        subscription.current_period_end * 1000
-      ).toISOString(),
+      current_period_end: periodEnd
+        ? new Date(periodEnd * 1000).toISOString()
+        : null,
     })
-    .eq('email', session.customer_email!)
+    .eq('id', userId)
+    .select()
 
   if (error) {
-    console.error('Error updating user after checkout:', error)
+    console.error('❌ Error updating user after checkout:', error)
+  } else if (!data || data.length === 0) {
+    console.error('❌ No user found with ID:', userId)
   } else {
-    console.log('✅ User activated successfully')
+    console.log('✅ User activated successfully:', data)
   }
 
-  // Optionally: Store in subscriptions table
-  const userId = await getUserIdByEmail(session.customer_email!)
-  if (userId) {
-    await supabase.from('subscriptions').upsert({
-      user_id: userId,
-      stripe_subscription_id: subscriptionId,
-      stripe_price_id: subscription.items.data[0].price.id,
-      status: subscription.status,
-      current_period_start: new Date(
-        subscription.current_period_start * 1000
-      ).toISOString(),
-      current_period_end: new Date(
-        subscription.current_period_end * 1000
-      ).toISOString(),
-      cancel_at_period_end: subscription.cancel_at_period_end,
-    })
-  }
+  // Store in subscriptions table
+  const periodStart = (subscription as any).current_period_start
+  await supabase.from('subscriptions').upsert({
+    user_id: userId,
+    stripe_subscription_id: subscriptionId,
+    stripe_price_id: subscription.items.data[0].price.id,
+    status: subscription.status,
+    current_period_start: periodStart
+      ? new Date(periodStart * 1000).toISOString()
+      : null,
+    current_period_end: periodEnd
+      ? new Date(periodEnd * 1000).toISOString()
+      : null,
+    cancel_at_period_end: subscription.cancel_at_period_end,
+  })
 }
 
 /**
@@ -63,16 +79,17 @@ async function handleCheckoutSessionCompleted(
 async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
   console.log('🔄 Subscription updated:', subscription.id)
 
-  const supabase = await createClient()
+  const supabase = createAdminClient()
 
+  const periodEnd = (subscription as any).current_period_end
   const { error } = await supabase
     .from('users')
     .update({
       plan: getPlanFromPriceId(subscription.items.data[0].price.id),
       subscription_status: subscription.status,
-      current_period_end: new Date(
-        subscription.current_period_end * 1000
-      ).toISOString(),
+      current_period_end: periodEnd
+        ? new Date(periodEnd * 1000).toISOString()
+        : null,
     })
     .eq('stripe_customer_id', subscription.customer as string)
 
@@ -83,17 +100,18 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
   }
 
   // Update subscriptions table
+  const periodStart = (subscription as any).current_period_start
   await supabase
     .from('subscriptions')
     .update({
       stripe_price_id: subscription.items.data[0].price.id,
       status: subscription.status,
-      current_period_start: new Date(
-        subscription.current_period_start * 1000
-      ).toISOString(),
-      current_period_end: new Date(
-        subscription.current_period_end * 1000
-      ).toISOString(),
+      current_period_start: periodStart
+        ? new Date(periodStart * 1000).toISOString()
+        : null,
+      current_period_end: periodEnd
+        ? new Date(periodEnd * 1000).toISOString()
+        : null,
       cancel_at_period_end: subscription.cancel_at_period_end,
     })
     .eq('stripe_subscription_id', subscription.id)
@@ -106,7 +124,7 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
 async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
   console.log('❌ Subscription deleted:', subscription.id)
 
-  const supabase = await createClient()
+  const supabase = createAdminClient()
 
   const { error } = await supabase
     .from('users')
@@ -132,13 +150,36 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
 }
 
 /**
+ * Handle invoice.payment_succeeded event
+ * This fires when a payment is successfully processed
+ */
+async function handlePaymentSucceeded(invoice: Stripe.Invoice) {
+  console.log('✅ Payment succeeded:', invoice.id)
+
+  const supabase = createAdminClient()
+
+  const { error } = await supabase
+    .from('users')
+    .update({
+      subscription_status: 'active',
+    })
+    .eq('stripe_customer_id', invoice.customer as string)
+
+  if (error) {
+    console.error('Error updating payment succeeded status:', error)
+  } else {
+    console.log('✅ User subscription marked as active')
+  }
+}
+
+/**
  * Handle invoice.payment_failed event
  * This fires when payment fails (expired card, insufficient funds, etc.)
  */
 async function handlePaymentFailed(invoice: Stripe.Invoice) {
   console.log('⚠️ Payment failed:', invoice.id)
 
-  const supabase = await createClient()
+  const supabase = createAdminClient()
 
   const { error } = await supabase
     .from('users')
@@ -177,6 +218,10 @@ export async function handleStripeWebhook(
         await handleSubscriptionDeleted(event.data.object as Stripe.Subscription)
         break
 
+      case 'invoice.payment_succeeded':
+        await handlePaymentSucceeded(event.data.object as Stripe.Invoice)
+        break
+
       case 'invoice.payment_failed':
         await handlePaymentFailed(event.data.object as Stripe.Invoice)
         break
@@ -212,7 +257,7 @@ function getPlanFromPriceId(priceId: string): 'free' | 'pro_monthly' | 'pro_year
  * Helper: Get user ID from email
  */
 async function getUserIdByEmail(email: string): Promise<string | null> {
-  const supabase = await createClient()
+  const supabase = createAdminClient()
   const { data } = await supabase
     .from('users')
     .select('id')
