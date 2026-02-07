@@ -2,14 +2,18 @@
 
 import { signIn } from "../actions/auth";
 import Link from "next/link";
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
-/**
- * Login Page
- * Modern authentication page with glassmorphism design
- */
 export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginContent />
+    </Suspense>
+  )
+}
+
+function LoginContent() {
   const [isLoading, setIsLoading] = useState(false)
   const searchParams = useSearchParams()
   const error = searchParams.get('error')
@@ -143,11 +147,30 @@ export default function LoginPage() {
           </form>
         </div>
 
-        {/* Security Notice */}
-        <div className="mt-6 text-center">
-          <p className="text-xs text-slate-500 dark:text-slate-500">
-            🔒 Your data is encrypted and secure
-          </p>
+        {/* Demo Credentials */}
+        <div className="mt-4 glass-card p-5" style={{ border: '1px solid rgba(99, 102, 241, 0.3)' }}>
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></div>
+            <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+              Demo Credentials
+            </p>
+          </div>
+          <div className="space-y-1.5 text-sm text-slate-600 dark:text-slate-400">
+            <p><span className="font-medium text-slate-700 dark:text-slate-300">Email:</span> test@test.com</p>
+            <p><span className="font-medium text-slate-700 dark:text-slate-300">Password:</span> test1234</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              const emailInput = document.getElementById('email') as HTMLInputElement
+              const passwordInput = document.getElementById('password') as HTMLInputElement
+              if (emailInput) emailInput.value = 'test@test.com'
+              if (passwordInput) passwordInput.value = 'test1234'
+            }}
+            className="mt-3 w-full text-xs font-medium py-1.5 px-3 rounded-md bg-indigo-50 text-indigo-600 hover:bg-indigo-100 dark:bg-indigo-900/30 dark:text-indigo-400 dark:hover:bg-indigo-900/50 transition-colors cursor-pointer"
+          >
+            Auto-fill credentials
+          </button>
         </div>
       </div>
     </div>
